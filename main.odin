@@ -19,42 +19,67 @@ main :: proc() {
 
 	window := sdl.CreateWindow("title", WINDOW_WIDTH, WINDOW_HEIGHT, sdl.WindowFlags{.RESIZABLE})
 	fmt.assertf(window != nil, "CreateWindow failed: %s", sdl.GetError())
+	defer sdl.DestroyWindow(window)
 
 	// Create GPU stuff
 
 	// NOTE look into shadercross
 	gpu_device := sdl.CreateGPUDevice(sdl.GPUShaderFormat{.SPIRV, .MSL, .METALLIB}, true, nil)
 	fmt.assertf(gpu_device != nil, "CreateGPUDevice failed: %s", sdl.GetError())
+	defer sdl.DestroyGPUDevice(gpu_device)
 
 	window_claimed := sdl.ClaimWindowForGPUDevice(gpu_device, window)
 	fmt.assertf(window_claimed, "ClaimWindowForGPUDevice failed: %s", sdl.GetError())
 
-	triangle_vertices := [3]Vector3 {
-		Vector3{0.0, 0.5, 0.0},
-		Vector3{-0.5, -0.5, 0.0},
-		Vector3{0.5, -0.5, 0.0},
+	command_buffer := sdl.AcquireGPUCommandBuffer(gpu_device)
+	fmt.assertf(command_buffer != nil, "AcquireGPUCommandBuffer failed: %s", sdl.GetError())
+
+	swapchain_texture: ^sdl.GPUTexture
+	fmt.assertf(
+		sdl.WaitAndAcquireGPUSwapchainTexture(
+			command_buffer,
+			window,
+			&swapchain_texture,
+			nil,
+			nil,
+		),
+		"WaitAndAcquireGPUSwapchainTexture failed: %s",
+		sdl.GetError(),
+	)
+
+	color_target_info := sdl.GPUColorTargetInfo {
+		texture     = swapchain_texture,
+		clear_color = sdl.FColor{0.3, 0.6, 0.5, 1.0},
+		load_op     = sdl.GPULoadOp.CLEAR,
+		store_op    = sdl.GPUStoreOp.STORE,
 	}
 
-	vertex_shader_file := #load("shaders/vertex.msl")
-	fragment_shader_file := #load("shaders/fragment.msl")
+	render_pass := sdl.BeginGPURenderPass(command_buffer, &color_target_info, 1, nil)
+	sdl.EndGPURenderPass(render_pass)
 
-	vertex_shader := sdl.CreateGPUShader(
-		gpu_device,
-		sdl.GPUShaderCreateInfo {
-			code_size = len(vertex_shader_file),
-			code = raw_data(vertex_shader_file),
-			entrypoint = "main0",
-			format = sdl.GPUShaderFormat{.MSL},
-			stage = sdl.GPUShaderStage.VERTEX,
-			num_samplers = 0,
-			num_storage_textures = 0,
-			num_storage_buffers = 0,
-			num_uniform_buffers = 0,
-			props = 0,
-		},
+	fmt.assertf(
+		sdl.SubmitGPUCommandBuffer(command_buffer),
+		"SubmitGPUCommandBuffer failed: %s",
+		sdl.GetError(),
 	)
-	fmt.assertf(vertex_shader != nil, "CreateGPUShader failed: %s", sdl.GetError())
 
+	event: sdl.Event
+
+	game_loop: for {
+		if sdl.PollEvent(&event) {
+
+			if event.type == sdl.EventType.QUIT {
+				break game_loop
+			}
+
+			if event.type == sdl.EventType.KEY_DOWN {
+				#partial switch event.key.scancode {
+				case .ESCAPE:
+					break game_loop
+				}
+			}
+		}
+	}
 
 	sdl.Quit()
 }
