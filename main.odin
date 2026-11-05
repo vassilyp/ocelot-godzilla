@@ -1,7 +1,7 @@
 package main
 
 import "core:fmt"
-import "core:log"
+import "core:mem"
 import sdl "vendor:sdl3"
 
 WINDOW_WIDTH :: 860
@@ -12,12 +12,28 @@ Vector3 :: struct {
 }
 
 main :: proc() {
-	context.logger = log.create_console_logger()
+	when ODIN_DEBUG {
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		defer mem.tracking_allocator_destroy(&track)
 
-	metadataSet := sdl.SetAppMetadata("app name", "version 0.0", "app id")
+		context.allocator = mem.tracking_allocator(&track)
+		defer report_leaks(track)
+	}
+
+	init_ok := sdl.Init({.VIDEO})
+	fmt.assertf(init_ok, "Init failed: %s", sdl.GetError())
+	defer sdl.Quit()
+
+	metadataSet := sdl.SetAppMetadata("Ocelot Godzilla", "version 0.0", "ocelot-godzilla")
 	fmt.assertf(metadataSet, "couldn't set metadata: %s", sdl.GetError())
 
-	window := sdl.CreateWindow("title", WINDOW_WIDTH, WINDOW_HEIGHT, sdl.WindowFlags{.RESIZABLE})
+	window := sdl.CreateWindow(
+		"SDL Window",
+		WINDOW_WIDTH,
+		WINDOW_HEIGHT,
+		sdl.WindowFlags{.RESIZABLE},
+	)
 	fmt.assertf(window != nil, "CreateWindow failed: %s", sdl.GetError())
 	defer sdl.DestroyWindow(window)
 
@@ -50,14 +66,13 @@ main :: proc() {
 	)
 	fmt.assertf(frag_err == Error.None, "Load shader failed: %v", frag_err)
 
-	// TODO: investigate
 	pipeline_create_info := sdl.GPUGraphicsPipelineCreateInfo {
 		vertex_shader = vertex_shader,
 		fragment_shader = fragment_shader,
 		primitive_type = sdl.GPUPrimitiveType.TRIANGLELIST,
 		rasterizer_state = sdl.GPURasterizerState{fill_mode = sdl.GPUFillMode.FILL},
-		target_info = sdl.GPUGraphicsPipelineTargetInfo {
-			num_color_targets = 1,
+		target_info = sdl.GPUGraphicsPipelineTargetInfo { 	// needs more explanation
+			num_color_targets         = 1,
 			color_target_descriptions = raw_data(
 				[]sdl.GPUColorTargetDescription {
 					{format = sdl.GetGPUSwapchainTextureFormat(gpu_device, window)},
@@ -69,6 +84,8 @@ main :: proc() {
 	pipeline := sdl.CreateGPUGraphicsPipeline(gpu_device, pipeline_create_info)
 	fmt.assertf(pipeline != nil, "Couldn't create pipeline: %s", sdl.GetError())
 	defer sdl.ReleaseGPUGraphicsPipeline(gpu_device, pipeline)
+
+	// TODO: pass in vertices in a vertex buffer?
 
 	sdl.ReleaseGPUShader(gpu_device, vertex_shader)
 	sdl.ReleaseGPUShader(gpu_device, fragment_shader)
@@ -91,19 +108,16 @@ main :: proc() {
 
 	color_target_info := sdl.GPUColorTargetInfo {
 		texture     = swapchain_texture,
-		clear_color = sdl.FColor{0.0, 0.0, 0.0, 0.0},
+		clear_color = sdl.FColor{0.0, 0.0, 0.0, 1.0},
 		load_op     = .CLEAR,
 		store_op    = .STORE,
 	}
 
 	render_pass := sdl.BeginGPURenderPass(command_buffer, &color_target_info, 1, nil)
 
-	// TODO: investigate
 	sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
 	sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
-
 	sdl.EndGPURenderPass(render_pass)
-
 	fmt.assertf(
 		sdl.SubmitGPUCommandBuffer(command_buffer),
 		"SubmitGPUCommandBuffer failed: %s",
@@ -128,6 +142,4 @@ main :: proc() {
 		}
 	}
 
-
-	sdl.Quit()
 }
