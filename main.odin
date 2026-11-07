@@ -8,7 +8,7 @@ WINDOW_WIDTH :: 860
 WINDOW_HEIGHT :: 480
 
 Vector3 :: struct {
-	x, y, z: f64,
+	x, y, z: f32,
 }
 
 main :: proc() {
@@ -25,7 +25,7 @@ main :: proc() {
 	fmt.assertf(init_ok, "Init failed: %s", sdl.GetError())
 	defer sdl.Quit()
 
-	metadataSet := sdl.SetAppMetadata("Ocelot Godzilla", "version 0.0", "ocelot-godzilla")
+	metadataSet := sdl.SetAppMetadata("Ocelot", "version 0.0", "ocelot")
 	fmt.assertf(metadataSet, "couldn't set metadata: %s", sdl.GetError())
 
 	window := sdl.CreateWindow(
@@ -71,8 +71,8 @@ main :: proc() {
 		fragment_shader = fragment_shader,
 		primitive_type = sdl.GPUPrimitiveType.TRIANGLELIST,
 		rasterizer_state = sdl.GPURasterizerState{fill_mode = sdl.GPUFillMode.FILL},
-		target_info = sdl.GPUGraphicsPipelineTargetInfo { 	// needs more explanation
-			num_color_targets         = 1,
+		target_info = sdl.GPUGraphicsPipelineTargetInfo {
+			num_color_targets = 1,
 			color_target_descriptions = raw_data(
 				[]sdl.GPUColorTargetDescription {
 					{format = sdl.GetGPUSwapchainTextureFormat(gpu_device, window)},
@@ -85,50 +85,15 @@ main :: proc() {
 	fmt.assertf(pipeline != nil, "Couldn't create pipeline: %s", sdl.GetError())
 	defer sdl.ReleaseGPUGraphicsPipeline(gpu_device, pipeline)
 
-	// TODO: pass in vertices in a vertex buffer?
-
 	sdl.ReleaseGPUShader(gpu_device, vertex_shader)
 	sdl.ReleaseGPUShader(gpu_device, fragment_shader)
 
-	command_buffer := sdl.AcquireGPUCommandBuffer(gpu_device)
-	fmt.assertf(command_buffer != nil, "AcquireGPUCommandBuffer failed: %s", sdl.GetError())
-
-	swapchain_texture: ^sdl.GPUTexture
-	fmt.assertf(
-		sdl.WaitAndAcquireGPUSwapchainTexture(
-			command_buffer,
-			window,
-			&swapchain_texture,
-			nil,
-			nil,
-		),
-		"WaitAndAcquireGPUSwapchainTexture failed: %s",
-		sdl.GetError(),
-	)
-
-	color_target_info := sdl.GPUColorTargetInfo {
-		texture     = swapchain_texture,
-		clear_color = sdl.FColor{0.0, 0.0, 0.0, 1.0},
-		load_op     = .CLEAR,
-		store_op    = .STORE,
-	}
-
-	render_pass := sdl.BeginGPURenderPass(command_buffer, &color_target_info, 1, nil)
-
-	sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
-	sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
-	sdl.EndGPURenderPass(render_pass)
-	fmt.assertf(
-		sdl.SubmitGPUCommandBuffer(command_buffer),
-		"SubmitGPUCommandBuffer failed: %s",
-		sdl.GetError(),
-	)
-
 	event: sdl.Event
 
-	game_loop: for {
-		if sdl.PollEvent(&event) {
+	clear_color := sdl.FColor{0.0, 0.0, 0.0, 1.0}
 
+	game_loop: for {
+		for sdl.PollEvent(&event) {
 			if event.type == .QUIT {
 				break game_loop
 			}
@@ -137,9 +102,48 @@ main :: proc() {
 				#partial switch event.key.scancode {
 				case .ESCAPE:
 					break game_loop
+				case .UP:
+					clear_color = sdl.FColor{1.0, 0.0, 0.0, 1.0}
+				}
+			} else if event.type == .KEY_UP {
+				#partial switch event.key.scancode {
+				case .UP:
+					clear_color = sdl.FColor{0.0, 0.0, 0.0, 1.0}
 				}
 			}
 		}
-	}
 
+		command_buffer := sdl.AcquireGPUCommandBuffer(gpu_device)
+		fmt.assertf(command_buffer != nil, "AcquireGPUCommandBuffer failed: %s", sdl.GetError())
+
+		swapchain_texture: ^sdl.GPUTexture
+		fmt.assertf(
+			sdl.WaitAndAcquireGPUSwapchainTexture(
+				command_buffer,
+				window,
+				&swapchain_texture,
+				nil,
+				nil,
+			),
+			"WaitAndAcquireGPUSwapchainTexture failed: %s",
+			sdl.GetError(),
+		)
+
+		color_target_info := sdl.GPUColorTargetInfo {
+			texture     = swapchain_texture,
+			clear_color = clear_color,
+			load_op     = .CLEAR,
+			store_op    = .STORE,
+		}
+		render_pass := sdl.BeginGPURenderPass(command_buffer, &color_target_info, 1, nil)
+
+		sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
+		sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
+		sdl.EndGPURenderPass(render_pass)
+		fmt.assertf(
+			sdl.SubmitGPUCommandBuffer(command_buffer),
+			"SubmitGPUCommandBuffer failed: %s",
+			sdl.GetError(),
+		)
+	}
 }
