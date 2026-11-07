@@ -11,6 +11,10 @@ Vector3 :: struct {
 	x, y, z: f32,
 }
 
+Vertex :: struct {
+	position: Vector3,
+}
+
 main :: proc() {
 	when ODIN_DEBUG {
 		track: mem.Tracking_Allocator
@@ -20,6 +24,8 @@ main :: proc() {
 		context.allocator = mem.tracking_allocator(&track)
 		defer report_leaks(track)
 	}
+
+	// GPU SETUP
 
 	init_ok := sdl.Init({.VIDEO})
 	fmt.assertf(init_ok, "Init failed: %s", sdl.GetError())
@@ -37,7 +43,6 @@ main :: proc() {
 	fmt.assertf(window != nil, "CreateWindow failed: %s", sdl.GetError())
 	defer sdl.DestroyWindow(window)
 
-	// Create GPU stuff
 
 	gpu_device := sdl.CreateGPUDevice(sdl.GPUShaderFormat{.SPIRV, .MSL, .METALLIB}, true, nil)
 	fmt.assertf(gpu_device != nil, "CreateGPUDevice failed: %s", sdl.GetError())
@@ -66,18 +71,30 @@ main :: proc() {
 	)
 	fmt.assertf(frag_err == Error.None, "Load shader failed: %v", frag_err)
 
+	vertex_buffer_description := []sdl.GPUVertexBufferDescription {
+		{slot = 0, pitch = size_of(Vertex), input_rate = .VERTEX},
+	}
+	vertex_attributes := []sdl.GPUVertexAttribute {
+		{location = 0, buffer_slot = 0, format = .FLOAT3, offset = 0},
+	}
+	color_target_descriptions := []sdl.GPUColorTargetDescription {
+		{format = sdl.GetGPUSwapchainTextureFormat(gpu_device, window)},
+	}
+
 	pipeline_create_info := sdl.GPUGraphicsPipelineCreateInfo {
 		vertex_shader = vertex_shader,
 		fragment_shader = fragment_shader,
-		primitive_type = sdl.GPUPrimitiveType.TRIANGLELIST,
-		rasterizer_state = sdl.GPURasterizerState{fill_mode = sdl.GPUFillMode.FILL},
+		vertex_input_state = {
+			vertex_buffer_descriptions = raw_data(vertex_buffer_description),
+			num_vertex_buffers = 1,
+			vertex_attributes = raw_data(vertex_attributes),
+			num_vertex_attributes = 1,
+		},
+		primitive_type = .TRIANGLELIST,
+		rasterizer_state = {fill_mode = sdl.GPUFillMode.FILL},
 		target_info = sdl.GPUGraphicsPipelineTargetInfo {
 			num_color_targets = 1,
-			color_target_descriptions = raw_data(
-				[]sdl.GPUColorTargetDescription {
-					{format = sdl.GetGPUSwapchainTextureFormat(gpu_device, window)},
-				},
-			),
+			color_target_descriptions = raw_data(color_target_descriptions),
 		},
 	}
 
@@ -88,9 +105,60 @@ main :: proc() {
 	sdl.ReleaseGPUShader(gpu_device, vertex_shader)
 	sdl.ReleaseGPUShader(gpu_device, fragment_shader)
 
+
+	// "GAME CODE"
+
 	event: sdl.Event
 
 	clear_color := sdl.FColor{0.0, 0.0, 0.0, 1.0}
+
+	// vertex buffer code (copy pass)
+
+	vertices := [3]Vertex {
+		{position = {x = -1.0, y = -1.0, z = 0.0}},
+		{position = {x = 0.0, y = 1.0, z = 0.0}},
+		{position = {x = 1.0, y = -1.0, z = 0.0}},
+	}
+
+	vertices_size := u32(size_of(vertices))
+
+	vertex_buffer := sdl.CreateGPUBuffer(gpu_device, {usage = {.VERTEX}, size = vertices_size})
+	fmt.assertf(vertex_buffer != nil, "couldn't create gpu buffer: %s", sdl.GetError())
+	defer sdl.ReleaseGPUBuffer(gpu_device, vertex_buffer)
+
+	transfer_buffer := sdl.CreateGPUTransferBuffer(
+		gpu_device,
+		{usage = .UPLOAD, size = vertices_size},
+	)
+	fmt.assertf(transfer_buffer != nil, "couldn't create transfer buffer: %s", sdl.GetError())
+
+	transfer_buffer_address := sdl.MapGPUTransferBuffer(gpu_device, transfer_buffer, false)
+	fmt.assertf(transfer_buffer_address != nil, "couldn't map transfer buffer: %s", sdl.GetError())
+	mem.copy(transfer_buffer_address, raw_data(vertices[:]), int(vertices_size))
+	sdl.UnmapGPUTransferBuffer(gpu_device, transfer_buffer)
+
+	command_buffer := sdl.AcquireGPUCommandBuffer(gpu_device)
+	fmt.assertf(command_buffer != nil, "couldn't acquire command buffer: %s", sdl.GetError())
+
+	copy_pass := sdl.BeginGPUCopyPass(command_buffer)
+	fmt.assertf(copy_pass != nil, "couldn't begin copy pass: %s", sdl.GetError())
+
+	sdl.UploadToGPUBuffer(
+		copy_pass,
+		{transfer_buffer = transfer_buffer, offset = 0},
+		{buffer = vertex_buffer, offset = 0, size = vertices_size},
+		false,
+	)
+	sdl.EndGPUCopyPass(copy_pass)
+	fmt.assertf(
+		sdl.SubmitGPUCommandBuffer(command_buffer),
+		"couldn't submit command buffer: %s",
+		sdl.GetError(),
+	)
+
+	sdl.ReleaseGPUTransferBuffer(gpu_device, transfer_buffer)
+
+	// end vertex buffer code
 
 	game_loop: for {
 		for sdl.PollEvent(&event) {
@@ -112,6 +180,8 @@ main :: proc() {
 				}
 			}
 		}
+
+		// render pass
 
 		command_buffer := sdl.AcquireGPUCommandBuffer(gpu_device)
 		fmt.assertf(command_buffer != nil, "AcquireGPUCommandBuffer failed: %s", sdl.GetError())
@@ -138,6 +208,10 @@ main :: proc() {
 		render_pass := sdl.BeginGPURenderPass(command_buffer, &color_target_info, 1, nil)
 
 		sdl.BindGPUGraphicsPipeline(render_pass, pipeline)
+
+		bindings := []sdl.GPUBufferBinding{{buffer = vertex_buffer, offset = 0}}
+		sdl.BindGPUVertexBuffers(render_pass, 0, raw_data(bindings), 1)
+
 		sdl.DrawGPUPrimitives(render_pass, 3, 1, 0, 0)
 		sdl.EndGPURenderPass(render_pass)
 		fmt.assertf(
@@ -145,5 +219,7 @@ main :: proc() {
 			"SubmitGPUCommandBuffer failed: %s",
 			sdl.GetError(),
 		)
+
+		// end render pass
 	}
 }

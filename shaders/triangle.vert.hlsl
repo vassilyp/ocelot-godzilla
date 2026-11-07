@@ -1,16 +1,11 @@
 struct Input {
     uint VertexIndex : SV_VertexID;
+    float3 Position : TEXCOORD0;
 };
 
 struct Output {
     float4 Color : TEXCOORD0;
     float4 Position : SV_Position;
-};
-
-static const float2 positions[3] = {
-    float2(-1.0f, -1.0f),
-    float2(1.0f, -1.0f),
-    float2(0.0f, 1.0f)
 };
 
 static const float4 colors[3] = {
@@ -22,7 +17,7 @@ static const float4 colors[3] = {
 Output main(Input input) {
     Output output;
 
-    output.Position = float4(positions[input.VertexIndex], 0.0f, 1.0f);
+    output.Position = float4(input.Position, 1.0f);
     output.Color = colors[input.VertexIndex];
 
     return output;
