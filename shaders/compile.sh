@@ -1,9 +1,18 @@
-# requires 'shadercross' to be in PATH
+#!/bin/bash
 
-shadercross triangle.vert.hlsl -o compiled/triangle.vert.msl
-shadercross triangle.vert.hlsl -o compiled/triangle.vert.dxil
-shadercross triangle.vert.hlsl -o compiled/triangle.vert.spv
+# Requires shadercross CLI installed from SDL_shadercross
+for filename in *.vert.hlsl; do
+    if [ -f "$filename" ]; then
+        shadercross "$filename" -o "./compiled/${filename/.hlsl/.spv}"
+        shadercross "$filename" -o "./compiled/${filename/.hlsl/.msl}"
+        shadercross "$filename" -o "./compiled/${filename/.hlsl/.dxil}"
+    fi
+done
 
-shadercross triangle.frag.hlsl -o compiled/triangle.frag.msl
-shadercross triangle.frag.hlsl -o compiled/triangle.frag.dxil
-shadercross triangle.frag.hlsl -o compiled/triangle.frag.spv
+for filename in *.frag.hlsl; do
+    if [ -f "$filename" ]; then
+        shadercross "$filename" -o "./compiled/${filename/.hlsl/.spv}"
+        shadercross "$filename" -o "./compiled/${filename/.hlsl/.msl}"
+        shadercross "$filename" -o "./compiled/${filename/.hlsl/.dxil}"
+    fi
+done
